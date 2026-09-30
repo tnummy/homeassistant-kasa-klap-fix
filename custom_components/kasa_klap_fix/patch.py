@@ -35,40 +35,63 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from kasa import device_factory
-from kasa.deviceconfig import DeviceConfig
-from kasa.exceptions import AuthenticationError
-
-# python-kasa has moved these between modules across releases. Try each known
-# location so this works regardless of which version Home Assistant ships.
-IotProtocol = None
-for _mod in ("kasa.protocols", "kasa.iotprotocol", "kasa"):
-    try:
-        IotProtocol = __import__(_mod, fromlist=["IotProtocol"]).IotProtocol
-        _IOT_FROM = _mod
-        break
-    except (ImportError, AttributeError):
-        continue
-
-KlapTransport = KlapTransportV2 = XorTransport = None
-for _mod in ("kasa.transports", "kasa.klaptransport", "kasa"):
-    try:
-        _m = __import__(_mod, fromlist=["KlapTransport"])
-        KlapTransport = _m.KlapTransport
-        KlapTransportV2 = _m.KlapTransportV2
-        _TRANSPORT_FROM = _mod
-        break
-    except (ImportError, AttributeError):
-        continue
-for _mod in ("kasa.transports", "kasa.xortransport", "kasa.protocol", "kasa"):
-    try:
-        XorTransport = __import__(_mod, fromlist=["XorTransport"]).XorTransport
-        _XOR_FROM = _mod
-        break
-    except (ImportError, AttributeError):
-        continue
-
 _LOGGER = logging.getLogger(__name__)
+
+# python-kasa classes, resolved lazily by _load_kasa() rather than at module
+# import time. Importing kasa submodules does blocking filesystem work (a
+# `listdir` over site-packages), and this module is first imported on Home
+# Assistant's event loop. Deferring the imports into _load_kasa() — which runs
+# from an executor via apply() — keeps that work off the loop and clears HA's
+# "Detected blocking call to listdir" warning.
+device_factory = None
+DeviceConfig = None
+AuthenticationError = None
+IotProtocol = None
+KlapTransport = None
+KlapTransportV2 = None
+XorTransport = None
+
+
+def _load_kasa() -> None:
+    """Import python-kasa classes into module globals.
+
+    Called from apply(), which runs in an executor, so the blocking import work
+    stays off the event loop. python-kasa has moved these between modules across
+    releases, so each is resolved from its known locations in turn.
+    """
+    global device_factory, DeviceConfig, AuthenticationError
+    global IotProtocol, KlapTransport, KlapTransportV2, XorTransport
+
+    from kasa import device_factory as _device_factory
+    from kasa.deviceconfig import DeviceConfig as _DeviceConfig
+    from kasa.exceptions import AuthenticationError as _AuthenticationError
+
+    device_factory = _device_factory
+    DeviceConfig = _DeviceConfig
+    AuthenticationError = _AuthenticationError
+
+    for _mod in ("kasa.protocols", "kasa.iotprotocol", "kasa"):
+        try:
+            IotProtocol = __import__(_mod, fromlist=["IotProtocol"]).IotProtocol
+            break
+        except (ImportError, AttributeError):
+            continue
+
+    for _mod in ("kasa.transports", "kasa.klaptransport", "kasa"):
+        try:
+            _m = __import__(_mod, fromlist=["KlapTransport"])
+            KlapTransport = _m.KlapTransport
+            KlapTransportV2 = _m.KlapTransportV2
+            break
+        except (ImportError, AttributeError):
+            continue
+
+    for _mod in ("kasa.transports", "kasa.xortransport", "kasa.protocol", "kasa"):
+        try:
+            XorTransport = __import__(_mod, fromlist=["XorTransport"]).XorTransport
+            break
+        except (ImportError, AttributeError):
+            continue
 
 _PATCH_FLAG = "_kasa_klap_fix_patched"
 
@@ -209,7 +232,13 @@ def resolved_imports() -> dict:
 
 
 def apply(force_xor_hosts=()) -> None:
-    """Apply both fallbacks. Safe to call more than once."""
+    """Apply both fallbacks. Safe to call more than once.
+
+    Intended to be run from an executor (see __init__.py) so the python-kasa
+    imports in _load_kasa() do not block Home Assistant's event loop.
+    """
+    if IotProtocol is None:
+        _load_kasa()
     missing = [n for n, v in {
         "IotProtocol": IotProtocol, "KlapTransport": KlapTransport,
         "KlapTransportV2": KlapTransportV2, "XorTransport": XorTransport,

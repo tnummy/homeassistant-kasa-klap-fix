@@ -1,8 +1,8 @@
 {
   "domain": "kasa_klap_fix",
   "name": "Kasa KLAP v2 auth fix",
-  "version": "1.0.0",
-  "documentation": "https://github.com/python-kasa/python-kasa/issues/1740",
+  "version": "1.0.1",
+  "documentation": "https://github.com/tnummy/homeassistant-kasa-klap-fix",
   "dependencies": [],
   "codeowners": [],
   "iot_class": "local_polling",
