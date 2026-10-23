@@ -221,6 +221,57 @@ def _patch_factory() -> None:
             mod.get_protocol = get_protocol
 
 
+def _patch_device_class() -> None:
+    """Choose the IOT device class from sysinfo on KLAP connections too.
+
+    python-kasa only classifies IOT devices from sysinfo on XOR connections.
+    Over KLAP it uses the discovery family, and IOT.SMARTPLUGSWITCH always
+    maps to IotPlug, so HS220/KS220 dimmers come up with no brightness.
+    After the normal connect, re-check against sysinfo and swap in the right
+    class if it differs. Any failure falls back to the original device.
+    """
+    original = getattr(device_factory, "_connect", None)
+    get_cls = getattr(device_factory, "get_device_class_from_sys_info", None)
+    if original is None or get_cls is None:
+        _LOGGER.warning(
+            "kasa_klap_fix: device-class fix not applied; python-kasa internals changed"
+        )
+        return
+
+    async def _connect(config, protocol):  # type: ignore[no-untyped-def]
+        device = await original(config, protocol)
+        if not isinstance(protocol, IotProtocol):
+            return device
+        sys_info = getattr(device, "sys_info", None)
+        if not sys_info:
+            return device
+        try:
+            try:
+                correct = get_cls({"system": {"get_sysinfo": sys_info}})
+            except Exception:
+                correct = get_cls(sys_info)
+        except Exception:
+            _LOGGER.debug("kasa_klap_fix: could not classify %s", config.host, exc_info=True)
+            return device
+        if correct is type(device):
+            return device
+        try:
+            new = correct(config.host, protocol=protocol)
+            await new.update()
+        except Exception:
+            _LOGGER.warning(
+                "kasa_klap_fix: reclassifying %s as %s failed; keeping %s",
+                config.host, correct.__name__, type(device).__name__, exc_info=True,
+            )
+            return device
+        _LOGGER.warning(
+            "kasa_klap_fix: %s was classified as %s; using %s from sysinfo",
+            config.host, type(device).__name__, correct.__name__,
+        )
+        return new
+
+    device_factory._connect = _connect
+
 def resolved_imports() -> dict:
     """What we managed to import, for diagnostics."""
     return {
@@ -255,6 +306,7 @@ def apply(force_xor_hosts=()) -> None:
     _patch_handshake()
     _patch_iot_query()
     _patch_factory()
+    _patch_device_class()
     setattr(KlapTransport, _PATCH_FLAG, True)
     _LOGGER.info(
         "kasa_klap_fix applied (XOR forced for: %s)",
