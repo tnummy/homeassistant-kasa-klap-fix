@@ -8,6 +8,8 @@ credentials.
 If some of your Kasa switches/plugs authenticate fine in Home Assistant but a
 handful refuse no matter what you type, this is for you.
 
+![Quick-start infographic: download the component, copy it to custom_components, add kasa_klap_fix to configuration.yaml, restart, then add your Kasa device](docs/infographic.jpg)
+
 ## The problem
 
 Newer Kasa firmware breaks local authentication in a few different ways:
